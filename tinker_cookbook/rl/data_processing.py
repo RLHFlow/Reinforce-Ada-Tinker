@@ -13,7 +13,7 @@ import torch
 from tinker import TensorData
 from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup, EnvGroupBuilder
 from tinker_cookbook.utils.misc_utils import all_same, safezip
-from tinker_cookbook.rl.reinforce_ada_utils import RewardHistory
+from tinker_cookbook.rl.reward_history import RewardHistory
 
 logger = logging.getLogger(__name__)
 

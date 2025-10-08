@@ -4,8 +4,9 @@ from datetime import datetime
 
 import chz
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.rl.train import AsyncConfig, Config, main
+from tinker_cookbook.rl.train import Config, main
 from tinker_cookbook.recipes.reinforce_ada import math_env
+from tinker_cookbook.rl.adaptive_sampling import AdaptiveSamplingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +52,15 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
-    max_steps_off_policy: int | None = None
+    # Global GRPO statistics
+    global_stat_est: bool = False
 
     ## Reinforce-Ada specific hyperparameters
     multiround_adaptive_downsampling: bool = False
-    reinforce_ada_choice: str | None = None  # "balanced" or "positive-focused"
-    global_stat_est: bool = False
+    reinforce_ada_choice: str = "balanced"  # or "positive-focused"
+    max_rounds: int = 4
+    round_repeat: int = 8
+    positive_threshold: float = 0.7
 
     ## TODO: clip
     # clip_ratio_low=0.2
@@ -71,7 +75,25 @@ async def cli_main(cli_config: CLIConfig):
         cli_config.model_name
     )
     model_name = cli_config.model_name.replace("/", "-")
-    run_name = f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.group_size}group-{cli_config.groups_per_batch}batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+
+    # Build adaptive sampling config
+    adaptive_config = None
+    if cli_config.multiround_adaptive_downsampling:
+        adaptive_config = AdaptiveSamplingConfig(
+            enabled=True,
+            strategy=cli_config.reinforce_ada_choice,
+            positive_threshold=cli_config.positive_threshold,
+            max_rounds=cli_config.max_rounds,
+            samples_per_round=cli_config.round_repeat,
+            final_samples_per_prompt=cli_config.group_size,
+            use_global_stats=cli_config.global_stat_est,
+        )
+
+    run_name = (
+        f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}"
+        f"lr-{cli_config.group_size}group-{cli_config.groups_per_batch}"
+        f"batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+    )
 
     # create log path if it doesn't exist
     if cli_config.log_path is not None:
@@ -94,6 +116,23 @@ async def cli_main(cli_config: CLIConfig):
         convo_prefix="standard",
     )
 
+    # Log adaptive sampling configuration
+    if adaptive_config.enabled:
+        logger.info("=" * 60)
+        logger.info("ADAPTIVE SAMPLING ENABLED")
+        logger.info(f"  Strategy: {adaptive_config.strategy}")
+        logger.info(f"  Positive threshold: {adaptive_config.positive_threshold}")
+        logger.info(f"  Max rounds: {adaptive_config.max_rounds}")
+        logger.info(f"  Samples per round: {adaptive_config.samples_per_round}")
+        logger.info(f"  Final samples per prompt: {adaptive_config.final_samples_per_prompt}")
+        logger.info(f"  Use global stats: {adaptive_config.use_global_stats}")
+        logger.info("=" * 60)
+    else:
+        logger.info("=" * 60)
+        logger.info("STANDARD SAMPLING (no adaptive sampling)")
+        logger.info(f"  Samples per prompt: {cli_config.group_size}")
+        logger.info("=" * 60)
+
     # Create full config
     config = Config(
         learning_rate=cli_config.learning_rate,
@@ -111,15 +150,8 @@ async def cli_main(cli_config: CLIConfig):
         num_substeps=cli_config.num_substeps,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
-        async_config=AsyncConfig(
-            max_steps_off_policy=cli_config.max_steps_off_policy,
-            groups_per_batch=cli_config.groups_per_batch,
-        )
-        if cli_config.max_steps_off_policy is not None
-        else None,
-        multiround_adaptive_downsampling=cli_config.multiround_adaptive_downsampling,
-        reinforce_ada_choice=cli_config.reinforce_ada_choice,
         global_stat_est=cli_config.global_stat_est,
+        adaptive_sampling=adaptive_config,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
