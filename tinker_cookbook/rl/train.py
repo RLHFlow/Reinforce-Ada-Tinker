@@ -40,6 +40,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
+from tinker_cookbook.rl.reinforce_ada_utils import RewardHistory
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ async def forward_backward(
 ) -> List[torch.Tensor]:
     """Accumulate gradients on a minibatch of data"""
     fwd_bwd_future = await training_client.forward_backward_async(
-        list(map(remove_mask, batch_d)), loss_fn="importance_sampling"
+        list(map(remove_mask, batch_d)), loss_fn="ppo"
     )
     fwd_bwd_result = await fwd_bwd_future.result_async()
 
@@ -215,6 +216,11 @@ class Config:
     async_config: AsyncConfig | None = None
     stream_minibatch_config: StreamMinibatchConfig | None = None
 
+    # Reinforce-Ada specific parameters
+    multiround_adaptive_downsampling: bool = False
+    reinforce_ada_choice: str | None = None  # "balanced" or "positive-focused"
+    global_stat_est: bool = False
+
 
 async def do_sync_training_with_stream_minibatch(
     start_batch: int,
@@ -227,6 +233,7 @@ async def do_sync_training_with_stream_minibatch(
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    reward_history: RewardHistory | None = None,
 ):
     """
     Implements fully synchronous on-policy training with minibatch streaming.
@@ -237,7 +244,7 @@ async def do_sync_training_with_stream_minibatch(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, start_batch
+        cfg, training_client, start_batch, reward_history=reward_history
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -292,6 +299,7 @@ async def do_sync_training_with_stream_minibatch(
             training_client,
             service_client,
             tokenizer,
+            reward_history=reward_history,
         )
 
         # Log metrics
@@ -328,6 +336,7 @@ async def do_async_training(
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    reward_history: RewardHistory | None = None,
 ):
     """Implements async off-policy training, capped at K steps off policy."""
     assert cfg.async_config is not None
@@ -487,6 +496,7 @@ async def do_async_training(
                     tokenizer,
                     [g.env_group_builder for g in wrapped_trajectory_groups],
                     [g.trajectory_group for g in wrapped_trajectory_groups],
+                    reward_history=reward_history,
                 )
             sampling_client_step = i_batch + 1
             sampling_client_updated_event.set()
@@ -552,6 +562,7 @@ async def save_checkpoint_and_get_sampling_client(
     cfg: Config,
     training_client: tinker.TrainingClient,
     i_batch: int,
+    reward_history: RewardHistory | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
@@ -562,6 +573,20 @@ async def save_checkpoint_and_get_sampling_client(
             loop_state={"batch": i_batch},
             kind="both" if (i_batch > 0 and i_batch % cfg.save_every == 0) else "sampler",
         )
+
+        # Save reward history if it exists
+        if reward_history is not None:
+            reward_history_path = os.path.join(cfg.log_path, f"reward_history_{i_batch:06d}.json")
+            reward_history.save(reward_history_path)
+
+            # Also save as "latest" for easy resumption
+            latest_path = os.path.join(cfg.log_path, "reward_history_latest.json")
+            reward_history.save(latest_path)
+
+            # Add reward history stats to metrics
+            stats = reward_history.get_stats()
+            metrics.update({f"reward_history/{k}": v for k, v in stats.items()})
+
         return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
 
 
@@ -571,6 +596,7 @@ async def prepare_minibatch(
     trajectory_groups_P: list[TrajectoryGroup],
     tokenizer: Tokenizer,
     service_client: tinker.ServiceClient,
+    reward_history: RewardHistory | None = None,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -585,7 +611,18 @@ async def prepare_minibatch(
 
     # Assemble training data
     with timed("assemble_training_data", metrics):
-        advantages_P = compute_advantages(trajectory_groups_P)
+        if cfg.global_stat_est:
+            if reward_history is None:
+                raise ValueError("reward_history must be provided when global_stat_est=True")
+            advantages_P = compute_advantages(
+                trajectory_groups_P,
+                env_group_builders_P=list(env_group_builders_P),
+                reward_history=reward_history,
+                use_global=True,
+            )
+        else:
+            advantages_P = compute_advantages(trajectory_groups_P, use_global=False)
+
         data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
     # Incorporate KL penalty if configured
@@ -609,6 +646,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     i_batch: int,
     data_D: list[tinker.Datum],
     training_logprobs_D: list[torch.Tensor],
+    reward_history: RewardHistory | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """
     At the end of the iteration, this will compute metrics for the full batch
@@ -623,7 +661,10 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, i_batch
+        cfg,
+        training_client,
+        i_batch,
+        reward_history=reward_history,
     )
     metrics.update(checkpoint_metrics)
 
@@ -644,6 +685,7 @@ async def do_train_step_streaming_and_get_sampling_client(
     service_client: tinker.ServiceClient,
     tokenizer: Tokenizer,
     trajectory_group_filter: Callable[[WrappedTrajectoryGroup | None], bool] = lambda _: True,
+    reward_history: RewardHistory | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """
     As soon as we have enough trajectories for a minibatch, we will train on them.
@@ -694,6 +736,7 @@ async def do_train_step_streaming_and_get_sampling_client(
                 [g.trajectory_group for g in wrapped_trajectory_groups],
                 tokenizer,
                 service_client,
+                reward_history=reward_history,
             )
             metrics.update(prepare_minibatch_metrics)
 
@@ -733,6 +776,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         i_batch + 1,
         all_data_D,
         all_training_logprobs_D,
+        reward_history=reward_history,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics
@@ -746,6 +790,7 @@ async def do_train_step_and_get_sampling_client(
     tokenizer: Tokenizer,
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
+    reward_history: RewardHistory | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(
@@ -754,6 +799,7 @@ async def do_train_step_and_get_sampling_client(
         trajectory_groups_P,
         tokenizer,
         service_client,
+        reward_history=reward_history,
     )
     metrics.update(prepare_minibatch_metrics)
 
@@ -772,6 +818,7 @@ async def do_train_step_and_get_sampling_client(
         i_batch + 1,
         data_D,
         training_logprobs_D,
+        reward_history=reward_history,
     )
     metrics.update(full_batch_metrics)
 
@@ -789,12 +836,13 @@ async def do_sync_training(
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    reward_history: RewardHistory | None = None,
 ):
     """Implements fully synchronous on-policy training"""
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, start_batch
+        cfg, training_client, start_batch, reward_history=reward_history
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -814,6 +862,7 @@ async def do_sync_training(
 
         # Get batch and sample trajectories
         env_group_builders_P = dataset.get_batch(i_batch)
+
         with timed("sample", metrics):
             trajectory_groups_P = await asyncio.gather(
                 *[
@@ -836,6 +885,7 @@ async def do_sync_training(
             tokenizer,
             env_group_builders_P,
             trajectory_groups_P,
+            reward_history=reward_history,
         )
 
         # Log metrics
@@ -888,6 +938,28 @@ async def main(
     num_batches = len(dataset)
     logger.info(f"Will train on {num_batches} batches")
 
+    # Initialize reward history tracker if using global statistics
+    reward_history = None
+    if cfg.global_stat_est:
+        reward_history = RewardHistory()
+        logger.info("Using global statistics estimation for advantages")
+
+        # Try to load reward history if resuming
+        if resume_info:
+            # Try to load from the specific batch checkpoint
+            reward_history_path = os.path.join(
+                cfg.log_path, f"reward_history_{start_batch:06d}.json"
+            )
+            if os.path.exists(reward_history_path):
+                reward_history.load(reward_history_path)
+            else:
+                # Fall back to latest
+                latest_path = os.path.join(cfg.log_path, "reward_history_latest.json")
+                if os.path.exists(latest_path):
+                    reward_history.load(latest_path)
+                else:
+                    logger.warning("No reward history found, starting fresh")
+
     # Training loop
     if cfg.async_config is not None:
         training_func = do_async_training
@@ -906,6 +978,7 @@ async def main(
         dataset=dataset,
         ml_logger=ml_logger,
         tokenizer=tokenizer,
+        reward_history=reward_history,
     )
 
     # Save final checkpoint
@@ -917,6 +990,11 @@ async def main(
             kind="both",
             loop_state={"batch": num_batches},
         )
+
+        # Save final reward history
+        if reward_history is not None:
+            final_reward_history_path = os.path.join(cfg.log_path, "reward_history_final.json")
+            reward_history.save(final_reward_history_path)
     else:
         logger.info("Training was already complete; nothing to do")
 
