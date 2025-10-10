@@ -4,7 +4,7 @@ from datetime import datetime
 
 import chz
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.rl.train import Config, main
+from tinker_cookbook.rl.train import Config, main, AsyncConfig
 from tinker_cookbook.recipes.reinforce_ada import math_env
 from tinker_cookbook.rl.adaptive_sampling import AdaptiveSamplingConfig
 
@@ -31,6 +31,10 @@ class CLIConfig:
     max_tokens: int = 2048
     kl_penalty_coef: float = 0.0
 
+    # Multi-epoch training parameters
+    num_epochs: int = 1
+    total_steps: int | None = None  # If set, overrides num_epochs
+
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
     num_substeps: int = 1
@@ -51,6 +55,8 @@ class CLIConfig:
     base_url: str | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
+
+    max_steps_off_policy: int | None = None
 
     # Global GRPO statistics
     global_stat_est: bool = False
@@ -76,8 +82,7 @@ async def cli_main(cli_config: CLIConfig):
     )
     model_name = cli_config.model_name.replace("/", "-")
 
-    # Build adaptive sampling config
-    adaptive_config = None
+    # Build adaptive sampling and async config
     if cli_config.multiround_adaptive_downsampling:
         adaptive_config = AdaptiveSamplingConfig(
             enabled=True,
@@ -87,12 +92,23 @@ async def cli_main(cli_config: CLIConfig):
             samples_per_round=cli_config.round_repeat,
             final_samples_per_prompt=cli_config.group_size,
             use_global_stats=cli_config.global_stat_est,
+            group_size=cli_config.group_size
         )
+    else:
+        adaptive_config = None
+
+    if cli_config.max_steps_off_policy is not None:
+        async_config = AsyncConfig(
+            max_steps_off_policy=cli_config.max_steps_off_policy,
+            groups_per_batch=cli_config.groups_per_batch,
+        )
+    else:
+        async_config = None
 
     run_name = (
-        f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}"
-        f"lr-{cli_config.group_size}group-{cli_config.groups_per_batch}"
-        f"batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+        f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr"
+        f"-{cli_config.group_size}group-{cli_config.groups_per_batch}batch"
+        f"-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     )
 
     # create log path if it doesn't exist
@@ -106,18 +122,8 @@ async def cli_main(cli_config: CLIConfig):
     else:
         wandb_name = run_name
 
-    # dataset builder
-    dataset_builder = math_env.ReinforceAdaDatasetBuilder(
-        dataset_name=cli_config.dataset_name,
-        batch_size=cli_config.groups_per_batch,
-        model_name_for_tokenizer=cli_config.model_name,
-        renderer_name=renderer_name,
-        group_size=cli_config.group_size,
-        convo_prefix="standard",
-    )
-
     # Log adaptive sampling configuration
-    if adaptive_config.enabled:
+    if adaptive_config is not None and adaptive_config.enabled:
         logger.info("=" * 60)
         logger.info("ADAPTIVE SAMPLING ENABLED")
         logger.info(f"  Strategy: {adaptive_config.strategy}")
@@ -132,6 +138,16 @@ async def cli_main(cli_config: CLIConfig):
         logger.info("STANDARD SAMPLING (no adaptive sampling)")
         logger.info(f"  Samples per prompt: {cli_config.group_size}")
         logger.info("=" * 60)
+
+    # dataset builder
+    dataset_builder = math_env.ReinforceAdaDatasetBuilder(
+        dataset_name=cli_config.dataset_name,
+        batch_size=cli_config.groups_per_batch,
+        model_name_for_tokenizer=cli_config.model_name,
+        renderer_name=renderer_name,
+        group_size=cli_config.group_size,
+        convo_prefix="standard",
+    )
 
     # Create full config
     config = Config(
@@ -152,6 +168,9 @@ async def cli_main(cli_config: CLIConfig):
         save_every=cli_config.save_every,
         global_stat_est=cli_config.global_stat_est,
         adaptive_sampling=adaptive_config,
+        async_config=async_config,
+        num_epochs=cli_config.num_epochs,
+        total_steps=cli_config.total_steps,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

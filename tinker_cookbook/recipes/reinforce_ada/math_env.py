@@ -89,13 +89,22 @@ class ReinforceAdaDataset(RLDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
     ):
-        self.ds = load_dataset(dataset_name, split="train").shuffle(seed=0)
+        self.ds = load_dataset(dataset_name, split="train")
         self.dataset_name = dataset_name
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer = renderer
         self.convo_prefix = convo_prefix
-        self.instruction = " Let's think step by step and output the final answer within \\boxed{}."
+        self.question_suffix = (
+            " Let's think step by step and output the final answer within \\boxed{}."
+        )
+        self.current_seed = 0
+
+    def set_epoch(self, seed: int) -> None:
+        """Shuffle the dataset for the new epoch."""
+        self.current_seed = seed
+        self.ds = self.ds.shuffle(seed=seed)
+        logger.info(f"Shuffled dataset with seed={seed}")
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         batch_start = index * self.batch_size
@@ -121,7 +130,7 @@ class ReinforceAdaDataset(RLDataset):
         return ProblemGroupBuilder(
             env_thunk=partial(
                 MathEnv,
-                problem + self.instruction,
+                problem + self.question_suffix,
                 answer,
                 self.renderer,
                 convo_prefix=self.convo_prefix,
