@@ -42,6 +42,7 @@ from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
 from tinker_cookbook.rl.reward_history import RewardHistory
 from tinker_cookbook.rl.adaptive_sampling import AdaptiveSamplingConfig
+from tinker_cookbook.rl.loss_fn import train_step_explicit_ppo
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class AsyncConfig:
     # We will ensure all batches have at least this many groups, even
     # as we discard stale samples
     groups_per_batch: int
-    
+
 
 @chz.chz
 class Config:
@@ -484,6 +485,18 @@ async def do_train_step_and_get_sampling_client(
             cfg.num_substeps,
         )
 
+        # TODO: implement custom PPO with clip_ratio
+        # training_logprobs_D = await train_step_explicit_ppo(
+        #     data_D,
+        #     training_client,
+        #     cfg.learning_rate,
+        #     cfg.num_substeps,
+        #     clip_ratio=0.2,  # or from config
+        #     clip_ratio_low=None,
+        #     clip_ratio_high=None,
+        #     clip_ratio_c=3.0,
+        # )
+
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
         cfg,
         training_client,
@@ -534,7 +547,7 @@ async def do_async_training(
 ):
     """Implements async off-policy training with adaptive sampling support."""
     assert cfg.async_config is not None
-    
+
     from tinker_cookbook.rl.adaptive_sampling import AdaptiveSampler
 
     shutdown_event = asyncio.Event()
@@ -547,7 +560,7 @@ async def do_async_training(
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
         cfg, training_client, start_step, start_epoch, start_batch, reward_history=reward_history
     )
-    
+
     # Create adaptive sampler if enabled
     adaptive_sampler = None
     if cfg.adaptive_sampling and cfg.adaptive_sampling.enabled:
@@ -556,7 +569,7 @@ async def do_async_training(
             sampling_client=sampling_client,
             max_tokens=cfg.max_tokens,
         )
-    
+
     sampling_client_step = start_step
     sampling_client_updated_event = asyncio.Event()
     sampling_client_updated_event.set()
@@ -574,21 +587,21 @@ async def do_async_training(
         current_batch = start_batch
         current_epoch = start_epoch
         i_step = start_step
-        
+
         while not shutdown_event.is_set() and i_step < total_steps:
             # Shuffle dataset at the beginning of each epoch
             if current_batch == 0:
                 logger.info(f"Starting epoch {current_epoch} (step {i_step}/{total_steps})")
                 dataset.set_epoch(seed=current_epoch)
                 logger.info(f"Dataset shuffled with seed={current_epoch}")
-            
+
             env_group_builders_P = dataset.get_batch(current_batch)
             for env_group_builder in env_group_builders_P:
                 await env_group_builders_queue.put(env_group_builder)
-            
+
             i_step += 1
             current_batch += 1
-            
+
             # Move to next epoch if we've completed the current one
             if current_batch >= batches_per_epoch:
                 current_batch = 0
@@ -606,15 +619,18 @@ async def do_async_training(
             # Save a reference to the sampling client step in case it changes
             # while we're running the rollout
             sampling_client_step_copy = sampling_client_step
-            
+
             if adaptive_sampler:
                 # Multi-round adaptive sampling
-                trajectory_groups, adaptive_metrics = await adaptive_sampler.multi_round_adaptive_downsampling(
+                (
+                    trajectory_groups,
+                    adaptive_metrics,
+                ) = await adaptive_sampler.multi_round_adaptive_downsampling(
                     [env_group_builder],
                     reward_history=reward_history,
                 )
                 metrics.update(adaptive_metrics)
-                
+
                 # Adaptive sampling returns a list of trajectory groups
                 if trajectory_groups:
                     trajectory_group = trajectory_groups[0]
@@ -627,7 +643,7 @@ async def do_async_training(
                     sampling_client,
                     env_group_builder,
                 )
-            
+
             if trajectory_group is None:
                 trajectory_groups_queue.put_nowait(None)
             else:
@@ -652,7 +668,7 @@ async def do_async_training(
         current_epoch = start_epoch
         current_batch = start_batch
         wrapped_trajectory_groups = []
-        
+
         while current_step < total_steps:
             wrapped_trajectory_group = await trajectory_groups_queue.get()
             if wrapped_trajectory_group is None:
@@ -672,7 +688,9 @@ async def do_async_training(
                     current_step - wrapped_trajectory_group.sampling_client_step
                     > cfg.async_config.max_steps_off_policy
                 ):
-                    logger.info(f"[training_loop] Step {current_step}: Samples are too stale, skipping")
+                    logger.info(
+                        f"[training_loop] Step {current_step}: Samples are too stale, skipping"
+                    )
                     asyncio.create_task(
                         env_group_builders_queue.put(wrapped_trajectory_group.env_group_builder)
                     )
@@ -707,24 +725,28 @@ async def do_async_training(
             #  Aggregate adaptive sampling metrics from trajectory workers
             adaptive_enabled_values = []
             first_round_reward_values = []
-            
+
             for wrapped_traj in wrapped_trajectory_groups:
                 if "adaptive_sampling/enabled" in wrapped_traj.metrics:
-                    adaptive_enabled_values.append(wrapped_traj.metrics["adaptive_sampling/enabled"])
+                    adaptive_enabled_values.append(
+                        wrapped_traj.metrics["adaptive_sampling/enabled"]
+                    )
                 if "adaptive_sampling/first_round_reward" in wrapped_traj.metrics:
-                    first_round_reward_values.append(wrapped_traj.metrics["adaptive_sampling/first_round_reward"])
-            
+                    first_round_reward_values.append(
+                        wrapped_traj.metrics["adaptive_sampling/first_round_reward"]
+                    )
+
             # Log aggregated adaptive sampling metrics
             if adaptive_enabled_values:
                 metrics["adaptive_sampling/enabled"] = all(adaptive_enabled_values)
-            
+
             if first_round_reward_values:
                 metrics["adaptive_sampling/real_reward"] = float(np.mean(first_round_reward_values))
 
             nonlocal sampling_client
             nonlocal sampling_client_step
             nonlocal adaptive_sampler
-            
+
             sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
                 cfg,
                 current_step,
@@ -737,10 +759,10 @@ async def do_async_training(
                 [g.trajectory_group for g in wrapped_trajectory_groups],
                 reward_history=reward_history,
             )
-            
+
             sampling_client_step = current_step + 1
             sampling_client_updated_event.set()
-            
+
             # Update adaptive sampler with new sampling client
             if adaptive_sampler:
                 adaptive_sampler.sampling_client = sampling_client
@@ -752,12 +774,12 @@ async def do_async_training(
             metrics.update(train_step_metrics)
             metrics["time/total"] = time.time() - t_start
             ml_logger.log_metrics(metrics, step=current_step)
-            
+
             # Update counters
             current_step += 1
             current_batch += 1
             wrapped_trajectory_groups = []
-            
+
             # Move to next epoch if we've completed the current one
             if current_batch >= batches_per_epoch:
                 current_batch = 0
@@ -864,8 +886,7 @@ async def do_sync_training(
                     trajectory_groups_P,
                     adaptive_metrics,
                 ) = await adaptive_sampler.multi_round_adaptive_downsampling(
-                    env_group_builders_P,
-                    reward_history=reward_history
+                    env_group_builders_P, reward_history=reward_history
                 )
                 metrics.update(adaptive_metrics)
 
