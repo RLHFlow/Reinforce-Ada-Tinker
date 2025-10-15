@@ -1,73 +1,131 @@
-<h1 align="center">Tinker Cookbook</h1>
 <div align="center">
-  <img src="assets/tinker-cover.png" width="60%" />
+
+# Reinforce-Ada: An Adaptive Sampling Framework for Reinforce-Style LLM Training
+[![Paper](https://img.shields.io/badge/paper-A42C25?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2510.04996) 
+[![Github](https://img.shields.io/badge/verl%20version-000000?style=for-the-badge&logo=github&logoColor=000&logoColor=white)](https://github.com/RLHFlow/Reinforce-Ada)
+[![Github](https://img.shields.io/badge/Tinker%20version-000000?style=for-the-badge&logo=github&logoColor=000&logoColor=white)](https://github.com/RLHFlow/Reinforce-Ada-Tinker)
 </div>
 
-We provide two libraries for the broader community to customize their language models: `tinker` and `tinker-cookbook`.
 
-- `tinker` is a training SDK for researchers and developers to fine-tune language models. You send API requests to us and we handle the complexities of distributed training.
-- `tinker-cookbook` includes realistic examples of fine-tuning language models. It builds on the Tinker API and provides common abstractions to fine-tune language models.
+## 📢 Introduction
+This repository contains the official implementation for Reinforce-Ada with [Tinker](https://github.com/thinking-machines-lab/tinker), an adaptive sampling framework designed to resolve the ``signal collapse'' problem in Reinforce-style algorithm with group baselines such as GRPO, making training more efficient and effective.
 
-## Installation
 
-1. Sign up for Tinker through the [waitlist](https://thinkingmachines.ai/tinker).
-2. Once you have access, create an API key from the [console](https://tinker-console.thinkingmachines.ai) and export it as environment variable `TINKER_API_KEY`.
-3. Install tinker python client via `pip install tinker`
-4. We recommend installing `tinker-cookbook` in a virtual env either with `conda` or `uv`. For running most examples, you can install via `pip install -e .`.
+### 🧐 The Challenge: Signal Collapse in GRPO
+Group Relative Policy Optimization (GRPO) is a widely used algorithm in Reinforcement Learning from Verifiable Reward (RLVR). It calculates the advantage by normalizing rewards within a group of n responses:
+$$g_\theta(x,a) =  \frac{r_i - \bar{r}}{\sigma_r + \varepsilon} \cdot \nabla_\theta \log \pi_\theta(a|x).$$
 
-## Tinker
+While effective, GRPO suffers from a critical flaw in practice: **signal collapse**. When all n samples for a prompt yield the same reward (e.g., all correct or all incorrect), **the gradient is zero** for all the responses and there is no learning signal for this prompt.
 
-Refer to the [docs](https://tinker-docs.thinkingmachines.ai/training-sampling) to start from basics.
-Here we introduce a few Tinker primitives - the basic components to fine-tune LLMs:
 
-```python
-service_client = tinker.ServiceClient()
-training_client = service_client.create_lora_training_client(
-  base_model="meta-llama/Llama-3.2-1B", rank=32,
-)
-training_client.forward_backward(...)
-training_client.optim_step(...)
-training_client.save_state(...)
-training_client.load_state(...)
+<p align="center">
+  <img src="figures/demo_grpo_ratio.png" width="67%" />
+</p>
+<i><b>Figure 1:</b> The proportion of prompts with zero gradient (uniform rewards) remains high during training.</i>
 
-sampling_client = training_client.save_weights_and_get_sampling_client(name="my_model")
-sampling_client.sample(...)
+This isn't a minor issue. It frequently occurs early in training (when models fail on hard prompts) and later in training (when models master easy ones). Crucially, this is a **statistical artifact of undersampling**, not a sign that the prompts are useless. A larger sample size n would often reveal a mix of correct and incorrect answers, unlocking a valid learning signal. For instance, the RL trained model exhibits 35.3\% all-correct groups at n=4, but only 10.2\% at n=256. These results demonstrate that the missing signal is often recoverable with larger n, confirming that uniform-reward collapse is a sampling artifact rather than a model limitation.  
+
+<p align="center">
+  <img src="figures/passk.png" width="83%" />
+</p>
+
+<i><b>Figure 2:</b> Increasing sample size (pass@k) reveals the model's true capability, confirming that signals are often recoverable.</i>
+</p>
+
+However, uniformly increasing n for all prompts is computationally prohibitive. Seminal works like DeepSeek-R1 show that a small group size (e.g., n=16) is sufficient for an effective gradient update. This reveals a gap between the large inference budget needed to find a signal and the smaller update budget needed to learn from it.
+
+
+### ✨ Our Solution Reinforce-Ada: Reinforce with Adaptive Sampling
+To bridge this gap, we introduce Reinforce-Ada, an adaptive sampling framework that intelligently allocates the inference budget. Instead of a fixed n, our algorithm samples in rounds, deactivating prompts once a sufficient learning signal is found. This frees up computation, allowing difficult prompts to be sampled more deeply until a useful signal emerges.
+
+
+<p align="center">
+  <img src="figures/algo_reinforce_ada.png" width="83%" />
+</p>
+
+<i><b>Algorithm 1:</b> The Reinforce-Ada framework.</i>
+</p>
+
+Our framework consists of three core ideas:
+
+1. **Adaptive Sampling**: A successive elimination process that eliminates prompts with sufficient learning signals and keeps sampling the unsolved prompts.
+2. **Principled Exit Conditions**: Flexible rules (Reinforce-Ada-pos, Reinforce-Ada-balance) to determine when a prompt is resolved, balancing signal diversity and sampling efficiency.
+3. **Robust Advantage Calculation**: We compute the advantage baseline $(r_i-\bar{r})$ using statistics from the entire pool of responses generated for a prompt, not just the final down-sampled batch, leading to more stable estimates.
+
+## 🛠️ Reinforce-Ada on Tinker
+All results shown in our paper are from the runnings on verl. Here we further validate the effectiveness of Reinforce-Ada on another easy-to-use training API, [Tinker](https://github.com/thinking-machines-lab/tinker).
+
+<p align="center">
+  <img src="figures/Tinker-Qwen3-4B-Instruct-2507.png" width="83%" />
+</p>
+
+<i><b>Figure 3:</b> Training dynamics with Qwen3-4B-Instruct-2507.</i>
+</p>
+
+We can observe that Reinforce-Ada achieves a significantly higher reward than GRPO on Tinker with LoRA finetuning.
+
+### Note:
+1. We apply full finetuning in our paper, while Tinker only supports finetuning with LoRA. The above results from LoRA are slightly worse than full finetuning on verl, which might be able improved by adjusting the LoRA rank and learning rate. 
+2. For full finetuning, we utilizes a small lr=1e-6. This small lr makes the learning really slow with LoRA. [Tinker suggests](https://tinker-docs.thinkingmachines.ai/supervised-learning/sl-hyperparams) using a 40 times lr (i.e. lr=4e-5) for LoRA on Qwen3-4B-Instruct-2507, which results in reward collapse (increase first, then decrease to 0) for both GRPO and Reinforce-Ada. Here we set lr=5e-6. A dedicated tuning might result in better performance.
+
+
+## 🌍 Environment Setup
+1. Create a new environment.
+   ```bash
+   python -m venv ~/.python/reinforce_ada_tinker
+   source ~/.python/reinforce_ada/bin/activate
+
+   # You can also use conda 
+   #conda create -n reinforce_ada_tinker python==3.10
+   #conda activate reinforce_ada_tinker
+   ```
+2. Install dependencies
+   ```bash
+   pip install pip --upgrade
+   pip install uv
+   python -m uv pip install tinker
+   git clone https://github.com/RLHFlow/Reinforce-Ada-Tinker
+   cd Reinforce-Ada-Tinker
+   python -m uv pip install -e .
+   python -m uv pip install wandb
+   ```
+
+## 🧪 Experiment Running
+1. Prepare the training and test datasets
+
+    If you have custom dataset, or want to train a new LLM, please go to the [Reinforce-Ada verl version]((https://github.com/RLHFlow/Reinforce-Ada)) for this step. Otherwise, you can use our open-sourced training sets in the following.
+2. Start the training
+
+   ```bash
+   # Set your key in thie file
+   bash scripts/run_reinforce_ada.sh
+   ```
+
+   The key hyperparameters from Reinforce-Ada are:
+   - ``multiround_adaptive_downsampling=True``: Use adaptive sampling.
+   - ``reinforce_ada_choice=balanced``: How to balance the positive and negative prompts within a batch, could be one of [balanced, positive-focused].
+   - ``global_stat_est=True``: Use global statistics to calculate the mean and std.
+
+   Note: Tinker considers one update of the actor as a step, while verl consider one update of the reference model as a step. total_steps, max_steps_off_policy and groups_per_batch has been set accordingly to match the verl version for training 400 steps.
+
+3. Evaluate
+   
+   We don't offer the evaluation code with Tinker. It's suggested to [download the weights](https://tinker-docs.thinkingmachines.ai/download-weights) and then evaluate them with our [Reinforce-Ada verl version]((https://github.com/RLHFlow/Reinforce-Ada)). You can evaluate the checkpoint every 800 steps with Tinker.
+
+
+## 🙏 Acknowledgement
+We thank [Tinker](https://github.com/thinking-machines-lab/tinker) for providing the awesome training API.
+
+## 📝 Citation
+If you find our paper or code helpful, feel free to give us a citation.
+```bibtex
+@misc{xiong2025reinforceada,
+      title={Reinforce-Ada: An Adaptive Sampling Framework for Reinforce-Style LLM Training}, 
+      author={Wei Xiong and Chenlu Ye and Baohao Liao and Hanze Dong and Xinxing Xu and Christof Monz and Jiang Bian and Nan Jiang and Tong Zhang},
+      year={2025},
+      eprint={2510.04996},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2510.04996}, 
+}
 ```
-
-See [tinker_cookbook/recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py) and [tinker_cookbook/recipes/rl_loop.py](tinker_cookbook/recipes/rl_loop.py) for minimal examples of using these primitives to fine-tune LLMs.
-
-To download the weights of any model:
-```python
-rest_client = service_client.create_rest_client()
-future = rest_client.download_checkpoint_archive_from_tinker_path(sampling_client.model_path)
-with open(f"model-checkpoint.tar.gz", "wb") as f:
-    f.write(future.result())
-```
-
-### Tinker Cookbook
-
-Besides these primitives, we also offer **Tinker Cookbook** (a.k.a. this repo), a library of a wide range of abstractions to help you customize training environments.
-[`tinker_cookbook/recipes/sl_basic.py`](tinker_cookbook/recipes/sl_basic.py) and [`tinker_cookbook/recipes/rl_basic.py`](tinker_cookbook/recipes/rl_basic.py) contain minimal examples to configure supervised learning and reinforcement learning.
-
-We also include a wide range of more sophisticated examples in the [`tinker_cookbook/recipes/`](tinker_cookbook/recipes/) folder:
-1. **[Chat supervised learning](tinker_cookbook/recipes/chat_sl/)**: supervised fine-tuning on conversational datasets like Tulu3.
-2. **[Math reasoning](tinker_cookbook/recipes/math_rl/)**: improve LLM reasoning capability by rewarding it for answering math questions correctly.
-3. **[Preference learning](tinker_cookbook/recipes/preference/)**: showcase a three-stage RLHF pipeline: 1) supervised fine-tuning, 2) learning a reward model, 3) RL against the reward model.
-4. **[Tool use](tinker_cookbook/recipes/tool_use/)**: train LLMs to better use retrieval tools to answer questions more accurately.
-5. **[Prompt distillation](tinker_cookbook/recipes/prompt_distillation/)**: internalize long and complex instructions into LLMs.
-6. **[Multi-Agent](tinker_cookbook/recipes/multiplayer_rl/)**: optimize LLMs to play against another LLM or themselves.
-
-These examples are located in each subfolder, and their `README.md` files will walk you through the key implementation details, the commands to run them, and the expected performance.
-
-### Import our utilities
-
-Tinker cookbook includes several utilities. Here's a quick overview:
-- [`renderers`](tinker_cookbook/renderers.py) converts tokens from/to structured chat message objects
-- [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) helps calculate hyperparameters suitable for LoRAs
-- [`evaluation`](tinker_cookbook/eval/evaluators.py) provides abstractions for evaluating Tinker models and [`inspect_evaluation`](tinker_cookbook/eval/inspect_evaluators.py) shows how to integrate with InspectAI to make evaluating on standard benchmarks easy.
-
-## Contributing
-
-This project is built in the spirit of open science and collaborative development. We believe that the best tools emerge through community involvement and shared learning.
-
-We welcome PR contributions after our private beta is over. If you have any feedback, please email us at tinker@thinkingmachines.ai.
