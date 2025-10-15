@@ -6,7 +6,7 @@
 [![Github](https://img.shields.io/badge/Tinker%20version-000000?style=for-the-badge&logo=github&logoColor=000&logoColor=white)](https://github.com/RLHFlow/Reinforce-Ada-Tinker)
 </div>
 
-## 🛠️ Reinforce-Ada on Tinker
+## 🛠️ Reinforce-Ada Meets Tinker
 This repository contains the official implementation for Reinforce-Ada with [Tinker](https://github.com/thinking-machines-lab/tinker), an adaptive sampling framework designed to resolve the ``signal collapse'' problem in Reinforce-style algorithm with group baselines such as GRPO, making training more efficient and effective.
 
 All results shown in our paper are from the runnings on verl. Here we further validate the effectiveness of Reinforce-Ada on another easy-to-use training API, [Tinker](https://github.com/thinking-machines-lab/tinker).
