@@ -11,13 +11,14 @@ from typing import List
 import tinker
 import torch
 from tinker import TensorData
-from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup
+from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup, EnvGroupBuilder
 from tinker_cookbook.utils.misc_utils import all_same, safezip
+from tinker_cookbook.rl.reinforce_ada_utils import RewardHistory
 
 logger = logging.getLogger(__name__)
 
 
-def compute_advantages(trajectory_groups_P: List[TrajectoryGroup]) -> List[torch.Tensor]:
+def compute_advantages_local(trajectory_groups_P: List[TrajectoryGroup]) -> List[torch.Tensor]:
     """Compute advantages for each trajectory, centered within groups."""
     advantages_P: list[torch.Tensor] = []
 
@@ -28,6 +29,61 @@ def compute_advantages(trajectory_groups_P: List[TrajectoryGroup]) -> List[torch
         advantages_P.append(advantages_G)
 
     return advantages_P
+
+
+def compute_advantages_global(
+    trajectory_groups_P: List[TrajectoryGroup],
+    env_group_builders_P: List[EnvGroupBuilder],
+    reward_history: RewardHistory,
+) -> List[torch.Tensor]:
+    """Compute advantages using global mean across all rewards from the same prompt."""
+    advantages_P: list[torch.Tensor] = []
+
+    for traj_group, env_builder in zip(trajectory_groups_P, env_group_builders_P, strict=True):
+        rewards_G = torch.tensor(traj_group.get_total_rewards())
+
+        # Create a unique identifier for this prompt
+        prompt_id = env_builder.get_prompt_id()
+
+        # Add current rewards to history
+        reward_history.add_rewards(prompt_id, rewards_G.tolist())
+
+        # Compute global mean for this prompt
+        global_mean = reward_history.get_mean(prompt_id)
+
+        # Center advantages using global mean
+        advantages_G = rewards_G - global_mean
+        advantages_P.append(advantages_G)
+
+    return advantages_P
+
+
+def compute_advantages(
+    trajectory_groups_P: List[TrajectoryGroup],
+    env_group_builders_P: List[EnvGroupBuilder] | None = None,
+    reward_history: RewardHistory | None = None,
+    use_global: bool = False,
+) -> List[torch.Tensor]:
+    """
+    Compute advantages based on configuration.
+
+    Args:
+        trajectory_groups_P: List of trajectory groups
+        env_group_builders_P: List of environment builders (required if use_global=True)
+        reward_history: Reward history tracker (required if use_global=True)
+        use_global: If True, use global mean; if False, use local GRPO mean
+
+    Returns:
+        List of advantage tensors
+    """
+    if use_global:
+        if env_group_builders_P is None or reward_history is None:
+            raise ValueError(
+                "env_group_builders_P and reward_history must be provided when use_global=True"
+            )
+        return compute_advantages_global(trajectory_groups_P, env_group_builders_P, reward_history)
+    else:
+        return compute_advantages_local(trajectory_groups_P)
 
 
 FlatObElem = int | tinker.ModelInputChunk

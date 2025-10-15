@@ -78,6 +78,16 @@ class ProblemGroupBuilder(EnvGroupBuilder):
     async def make_envs(self) -> Sequence[Env]:
         return [self.env_thunk() for _ in range(self.num_envs)]
 
+    def get_prompt_id(self) -> str:
+        """Return a unique identifier for this prompt."""
+        # Get the question from the first env
+        env = self.env_thunk()
+        question = env.get_question()
+        # Use hash for efficient lookup
+        import hashlib
+
+        return hashlib.md5(question.encode()).hexdigest()
+
     async def compute_group_rewards(
         self, trajectory_group: list[Trajectory]
     ) -> list[tuple[float, Metrics]]:
