@@ -15,7 +15,7 @@ All results shown in our paper are from the runnings on verl. Here we further va
   <img src="figures/Tinker-Qwen3-4B-Instruct-2507.png" width="83%" />
 </p>
 
-<i><b>Figure 3:</b> Training dynamics with Qwen3-4B-Instruct-2507.</i>
+<i><b>Figure 1:</b> Training dynamics with Qwen3-4B-Instruct-2507.</i>
 </p>
 
 We can observe that Reinforce-Ada achieves a significantly higher reward (from iid samples w/o adaptive sampling) than GRPO on Tinker with LoRA finetuning.
@@ -80,7 +80,7 @@ While effective, GRPO suffers from a critical flaw in practice: **signal collaps
 <p align="center">
   <img src="figures/demo_grpo_ratio.png" width="67%" />
 </p>
-<i><b>Figure 1:</b> The proportion of prompts with zero gradient (uniform rewards) remains high during training.</i>
+<i><b>Figure 2:</b> The proportion of prompts with zero gradient (uniform rewards) remains high during training.</i>
 
 This isn't a minor issue. It frequently occurs early in training (when models fail on hard prompts) and later in training (when models master easy ones). Crucially, this is a **statistical artifact of undersampling**, not a sign that the prompts are useless. A larger sample size n would often reveal a mix of correct and incorrect answers, unlocking a valid learning signal. For instance, the RL trained model exhibits 35.3\% all-correct groups at n=4, but only 10.2\% at n=256. These results demonstrate that the missing signal is often recoverable with larger n, confirming that uniform-reward collapse is a sampling artifact rather than a model limitation.  
 
@@ -88,7 +88,7 @@ This isn't a minor issue. It frequently occurs early in training (when models fa
   <img src="figures/passk.png" width="83%" />
 </p>
 
-<i><b>Figure 2:</b> Increasing sample size (pass@k) reveals the model's true capability, confirming that signals are often recoverable.</i>
+<i><b>Figure 3:</b> Increasing sample size (pass@k) reveals the model's true capability, confirming that signals are often recoverable.</i>
 </p>
 
 However, uniformly increasing n for all prompts is computationally prohibitive. Seminal works like DeepSeek-R1 show that a small group size (e.g., n=16) is sufficient for an effective gradient update. This reveals a gap between the large inference budget needed to find a signal and the smaller update budget needed to learn from it.
