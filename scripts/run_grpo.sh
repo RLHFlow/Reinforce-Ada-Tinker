@@ -9,7 +9,7 @@ export WANDB_API_KEY=
 
 model="Qwen/Qwen3-4B-Instruct-2507"
 dataset_name="RLHFlow/reinforce_ada_hard_prompt"
-save_dir="./outputs"
+save_dir="./outputs_grpo"
 
 mkdir -p ${save_dir}
 
