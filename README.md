@@ -131,7 +131,7 @@ Note: Not all LLMs are supported by Tinker, you can check the supported models [
 
 
 ## 🙏 Acknowledgement
-We thank [Tinker](https://github.com/thinking-machines-lab/tinker) for providing theis awesome training API.
+We thank [Tinker](https://github.com/thinking-machines-lab/tinker) for providing this awesome training API.
 
 ## 📝 Citation
 If you find our paper or code helpful, feel free to give us a citation.
