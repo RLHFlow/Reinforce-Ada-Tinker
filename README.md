@@ -67,7 +67,7 @@ We can observe that Reinforce-Ada achieves a significantly higher reward (from i
    - ``reinforce_ada_choice=balanced``: How to balance the positive and negative prompts within a batch, could be one of [balanced, positive-focused].
    - ``global_stat_est=True``: Use global statistics to calculate the mean and std.
 
-   Note: Tinker considers one update of the actor as a step, while verl consider one update of the reference model as a step. total_steps, max_steps_off_policy and groups_per_batch has been set accordingly to match the verl version for training 400 steps.
+   Note: Tinker considers one policy update as a step, while the verl version consider 16 updates as a step. total_steps, max_steps_off_policy and groups_per_batch has been set accordingly to match the verl version for training 400 steps.
 
 3. Evaluate
    
