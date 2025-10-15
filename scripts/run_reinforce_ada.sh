@@ -11,8 +11,6 @@ model="Qwen/Qwen3-4B-Instruct-2507"
 dataset_name="RLHFlow/reinforce_ada_hard_prompt"
 save_dir="./outputs_reinforce_ada"
 
-mkdir -p ${save_dir}
-
 python -m tinker_cookbook.recipes.reinforce_ada.train \
         model_name=${model} \
         dataset_name=${dataset_name} \
