@@ -14,7 +14,7 @@
 ## 🛠️ Reinforce-Ada Meets Tinker
 This repository contains the official implementation for Reinforce-Ada with [Tinker](https://github.com/thinking-machines-lab/tinker), an adaptive sampling framework designed to resolve the ``signal collapse'' problem in Reinforce-style algorithm with group baselines such as GRPO, making training more efficient and effective.
 
-All results shown in our paper are from the runnings on verl. Here we further validate the effectiveness of Reinforce-Ada on another easy-to-use training API, [Tinker](https://github.com/thinking-machines-lab/tinker).
+All results shown in our paper are from the runnings on verl. Here we further validate the effectiveness of Reinforce-Ada on another easy-to-use training API, Tinker.
 
 <p align="center">
   <img src="figures/Tinker-Qwen3-4B-Instruct-2507.png" width="83%" />
