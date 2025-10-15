@@ -97,7 +97,7 @@ We can observe that Reinforce-Ada achieves a significantly higher reward than GR
 2. Start the training
 
    ```bash
-   # Set your key in thie file
+   # Set your key in this file
    bash scripts/run_reinforce_ada.sh
    ```
 
@@ -110,11 +110,26 @@ We can observe that Reinforce-Ada achieves a significantly higher reward than GR
 
 3. Evaluate
    
-   We don't offer the evaluation code with Tinker. It's suggested to [download the weights](https://tinker-docs.thinkingmachines.ai/download-weights) and then evaluate them with our [Reinforce-Ada verl version]((https://github.com/RLHFlow/Reinforce-Ada)). You can evaluate the checkpoint every 800 steps with Tinker.
+   We don't offer the evaluation code with Tinker. It's suggested to [download the weights](https://tinker-docs.thinkingmachines.ai/download-weights) and then evaluate them with our [Reinforce-Ada verl version]((https://github.com/RLHFlow/Reinforce-Ada)). It's suggested to evaluate the checkpoint every 800 steps with Tinker.
+
+
+## 🤗 Processed Training Sets
+We offer the processed/selected training prompts in [huggingface](https://huggingface.co/collections/RLHFlow/reinforce-ada-68e3a8a10fc69dc56d9d86fe).
+
+Note: Not all LLMs are supported by Tinker, you can check the supported models [here](https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/model_info.py). 
+
+  | Model to train | Prompt level | Algorithm | Training set |
+  | --- | --- | --- | --- | 
+  | ```Qwen/Qwen2.5-Math-1.5B``` | easy | Reinforce-Ada-balance | [```RLHFlow/reinforce_ada_easy_prompt_1.5b```](https://huggingface.co/datasets/RLHFlow/reinforce_ada_simple_prompt_1-5b) 
+  | ```Qwen/Qwen2.5-Math-1.5B``` | hard | Reinforce-Ada-balance | [```RLHFlow/reinforce_ada_hard_prompt_1.5b```](https://huggingface.co/datasets/RLHFlow/reinforce_ada_hard_prompt_1-5b)
+  | ```Qwen/Qwen2.5-Math-7B``` | easy | Reinforce-Ada-balance | [```RLHFlow/reinforce_ada_easy_prompt```](https://huggingface.co/datasets/RLHFlow/reinforce_ada_easy_prompt) 
+  | ```Qwen/Qwen2.5-Math-7B``` | hard | Reinforce-Ada-balance | [```RLHFlow/reinforce_ada_hard_prompt```](https://huggingface.co/datasets/RLHFlow/reinforce_ada_hard_prompt) 
+  | ```Qwen/Qwen3-4B-Instruct-2507``` | hard | Reinforce-Ada-balance | [```RLHFlow/reinforce_ada_hard_prompt```](https://huggingface.co/datasets/RLHFlow/reinforce_ada_hard_prompt)
+  | ```meta-llama/Llama-3.2-3B-Instruct``` | hard | Reinforce-Ada-balance | [```RLHFlow/reinforce_ada_hard_prompt_llama```](https://huggingface.co/datasets/RLHFlow/reinforce_ada_hard_prompt_llama) 
 
 
 ## 🙏 Acknowledgement
-We thank [Tinker](https://github.com/thinking-machines-lab/tinker) for providing the awesome training API.
+We thank [Tinker](https://github.com/thinking-machines-lab/tinker) for providing theis awesome training API.
 
 ## 📝 Citation
 If you find our paper or code helpful, feel free to give us a citation.
