@@ -65,7 +65,7 @@ All results shown in our paper are from the runnings on verl. Here we further va
 We can observe that Reinforce-Ada achieves a significantly higher reward than GRPO on Tinker with LoRA finetuning.
 
 ### Note:
-1. We apply full finetuning in our paper, while Tinker only supports finetuning with LoRA. The above results from LoRA are slightly worse than full finetuning on verl, which might be able improved by adjusting the LoRA rank and learning rate. 
+1. We apply full finetuning in our paper, while Tinker only supports finetuning with LoRA. The above results from LoRA are slightly worse than full finetuning on verl, which might be able to improve by adjusting the LoRA rank and learning rate. 
 2. For full finetuning, we utilizes a small lr=1e-6. This small lr makes the learning really slow with LoRA. [Tinker suggests](https://tinker-docs.thinkingmachines.ai/supervised-learning/sl-hyperparams) using a 40 times lr (i.e. lr=4e-5) for LoRA on Qwen3-4B-Instruct-2507, which results in reward collapse (increase first, then decrease to 0) for both GRPO and Reinforce-Ada. Here we set lr=5e-6. A dedicated tuning might result in better performance.
 
 
