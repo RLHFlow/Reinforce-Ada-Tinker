@@ -1,5 +1,5 @@
 """
-Utility function for Reinforce-Ada training.
+Track history rewards for global GRPO
 """
 
 import json
