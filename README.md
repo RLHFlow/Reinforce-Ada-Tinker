@@ -16,7 +16,7 @@ All results shown in our paper are from the runnings on verl. Here we further va
 <i><b>Figure 3:</b> Training dynamics with Qwen3-4B-Instruct-2507.</i>
 </p>
 
-We can observe that Reinforce-Ada achieves a significantly higher reward than GRPO on Tinker with LoRA finetuning.
+We can observe that Reinforce-Ada achieves a significantly higher reward (from iid samples w/o adaptive sampling) than GRPO on Tinker with LoRA finetuning.
 
 ### Note:
 1. We apply full finetuning in our paper, while Tinker only supports finetuning with LoRA. The above results from LoRA are slightly worse than full finetuning on verl, which might be able to improve by adjusting the LoRA rank and learning rate. 
